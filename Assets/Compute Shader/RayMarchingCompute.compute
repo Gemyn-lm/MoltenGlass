@@ -1,0 +1,229 @@
+// Raymarch.compute
+#pragma kernel CSMain
+
+RWTexture2D<float4> Result;
+
+float4x4 _CameraToWorld;
+float4x4 _CameraInverseProjection;
+float3 _CameraPosition;
+float3 _LightDirection;
+float _BlendStrength;
+float _SphereSize;
+float _ReflectionRatio;
+float _RefractionIndex;
+int _RayBounceCount;
+SamplerState sampler_SkyboxCubemap;
+TextureCube<float4> _SkyboxCubemap;
+
+float _DensityMutl;
+
+int _DebugModeIndex;
+
+struct Shape
+{
+    float3 position;
+    float3 color;
+};
+
+struct RayCastResult
+{
+    float3 position;
+    float3 normal;
+    float3 color;
+    bool hit;
+};
+
+StructuredBuffer<Shape> shapeBuffer;
+int shapeCount;
+
+
+
+float3 GetRayDirection(uint3 id)
+{
+    uint width, height;
+    Result.GetDimensions(width, height);
+
+    // Normalized pixel coordinates in [0,1]
+    float2 uv = (float2(id.x, id.y) + 0.5) / float2(width, height);
+    
+    // Convert to NDC space (-1..1)
+    float2 ndc = uv * 2.0 - 1.0;
+
+    // Convert from NDC to view space
+    float4 rayClip = float4(ndc, 0, 1);
+    float4 rayView = mul(_CameraInverseProjection, rayClip);
+    rayView /= rayView.w;
+    rayView.z = -1.0; // forward direction in Unity's camera space
+
+    // Convert to world space
+    return mul((float3x3)_CameraToWorld, normalize(rayView.xyz));
+}
+
+float sdSphere(float3 rayPos, float3 center, float radius)
+{
+    return length(rayPos - center) - radius;
+}
+
+// Return the reflection of D by the normal.
+float3 GetReflectionDirection(float3 d, float3 normal)
+{
+    normal = normalize(normal);
+    return d - 2.0 * normal * dot(d, normal);
+}
+
+// Return the refraction of rayDir by the normal and the refraction indcide (ior)
+float3 GetRefractionDirection(float3 rayDir, float3 normal, float ior)
+{
+    float cosI = -dot(normal, rayDir);
+    
+    // Determine if we enter or exit 
+    float3 n = normal;
+    float eta;    
+    if (cosI < 0.0)
+    { // exit
+        n = -normal;
+        cosI = -cosI;
+        eta = ior; 
+    }
+    else
+    { // enter
+        eta = 1.0 / ior; 
+    }
+    
+    float cosT2 = 1.0 - eta * eta * (1.0 - cosI * cosI);
+    
+    // Total refraction, no ray
+    if (cosT2 < 0.0)
+        return float3(0, 0, 0);
+    
+    return eta * rayDir + (eta * cosI - sqrt(cosT2)) * n;
+}
+
+float4 SmoothMin(float distA, float distB, float3 colA, float3 colB, float strength)
+{
+    float h = clamp( 0.5+0.5*(distB - distA) / strength, 0.0, 1.0 );
+    float3 col = lerp(colB, colA, h);
+    float dist = lerp(distB, distA, h) - strength * h * (1.0 - h);
+    return float4(col, dist);
+}
+
+
+float4 GlobalSignedDistanceField(float3 rayPos)
+{
+    float dist = 80.0f;
+    float3 resultColor = float3(0, 0, 0);
+    for (int i = 0; i < shapeCount; ++i)
+    {
+        float newDist = sdSphere(rayPos, shapeBuffer[i].position, _SphereSize);
+        float4 blend = SmoothMin(dist, newDist, resultColor, shapeBuffer[i].color, _BlendStrength);
+        resultColor = blend.xyz;
+        dist = blend.w;
+    }
+    return float4(resultColor, dist);
+}
+
+float3 EstimateNormal(float3 p)
+{
+    float e = 0.001;
+    float2 k = float2(1, -1);
+    return normalize(
+        k.xyy * GlobalSignedDistanceField(p + k.xyy * e).w +
+        k.yyx * GlobalSignedDistanceField(p + k.yyx * e).w +
+        k.yxy * GlobalSignedDistanceField(p + k.yxy * e).w +
+        k.xxx * GlobalSignedDistanceField(p + k.xxx * e).w
+    );
+}
+
+float DensityAlongRay(float3 rayOrigin, float3 rayDirection)
+{
+    float3 rayPos = rayOrigin + rayDirection * 0.01;
+
+    float resultDensity = 0.0f;
+    for (int i = 0; i < 280; i++)
+    {
+        float4 sceneData = GlobalSignedDistanceField(rayPos);
+        if (sceneData.w < 0.00)
+        {
+            resultDensity -= sceneData.w;
+            rayPos -= rayDirection * sceneData.w;
+        }
+        else
+        {
+            rayPos += rayDirection * sceneData.w;
+        }
+        rayPos += rayDirection * 0.01;
+    }
+
+    return resultDensity;
+}
+
+RayCastResult RayCast(float3 rayOrigin, float3 rayDirection)
+{
+    RayCastResult result;
+    float3 rayPos = rayOrigin + rayDirection * 0.01;
+    float signedDistance = GlobalSignedDistanceField(rayPos).w;
+    float3 skybox = _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, rayDirection, 0);
+    
+    for (int i = 0; i < 180; i++)
+    {
+        float4 sceneData = GlobalSignedDistanceField(rayPos);
+        if (sceneData.w * normalize(signedDistance) < 0.001)
+        {
+            result.normal = EstimateNormal(rayPos);
+            float lighting = saturate(dot(result.normal, -_LightDirection)) + 0.4;
+            result.color = sceneData.xyz * lighting;
+            
+            result.hit = true;
+
+            result.position = rayPos;
+            return result;
+        }
+        else
+        {
+            rayPos += rayDirection * sceneData.w;
+        }
+    }
+
+    result.hit = false;
+    result.color = _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, rayDirection, 0);
+    return result;
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float3 rayOrigin = _CameraPosition;
+    float3 rayDir = normalize(GetRayDirection(id));
+
+    RayCastResult rayResult = RayCast(rayOrigin, rayDir);
+    float3 resultColor = rayResult.color;
+
+    
+
+    for (int i = 0; i < 5; i++)
+    {
+        if (i >= _RayBounceCount)
+            break;
+        if (rayResult.hit)
+        {
+            rayDir = GetReflectionDirection(rayDir, rayResult.normal);
+            rayResult = RayCast(rayResult.position, rayDir);
+            resultColor = resultColor * (1.0 - _ReflectionRatio) + rayResult.color * _ReflectionRatio;
+        }
+    }
+    
+
+    if (_DebugModeIndex == 1)
+        resultColor = rayResult.hit;
+    if (_DebugModeIndex == 2)
+        resultColor = rayResult.normal;
+    if (_DebugModeIndex == 3)
+        resultColor = rayDir;
+    if (_DebugModeIndex == 4)
+    {
+        float density = DensityAlongRay(rayOrigin, rayDir);
+        resultColor = density * _DensityMutl;
+    }
+    
+    Result[id.xy] = float4(resultColor, 1);
+}
