@@ -1,0 +1,407 @@
+// Raymarch.compute
+#pragma kernel CSMain
+
+// ─────────────────────────────────────────────
+//  Outputs & camera
+// ─────────────────────────────────────────────
+RWTexture2D<float4> Result;
+
+float4x4 _CameraToWorld;
+float4x4 _CameraInverseProjection;
+float3   _CameraPosition;
+float3   _LightDirection;
+uint     _FrameIndex;          
+
+// ─────────────────────────────────────────────
+//  Scène
+// ─────────────────────────────────────────────
+float _BlendStrength;
+float _SphereSize;
+float _ior;
+float _reflectivity;
+
+// ─────────────────────────────────────────────
+//  Path tracing
+// ─────────────────────────────────────────────
+int   _Samples;        
+int   _MaxBounces;     
+float _Gamma;          
+
+// ─────────────────────────────────────────────
+//  Skybox
+// ─────────────────────────────────────────────
+SamplerState    sampler_SkyboxCubemap;
+TextureCube<float4> _SkyboxCubemap;
+
+// ─────────────────────────────────────────────
+//  Debug
+// ─────────────────────────────────────────────
+float _DensityMult;
+int   _DebugModeIndex;
+
+// ─────────────────────────────────────────────
+//  Shape
+// ─────────────────────────────────────────────
+struct Shape
+{
+    float3 position;
+    float3 color;        
+    float  emissive;
+};
+
+
+
+StructuredBuffer<Shape> shapeBuffer;
+int shapeCount;
+
+
+uint pcg(uint v)
+{
+    uint state = v * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+
+float hash13(uint3 seed)
+{
+    uint h = pcg(seed.x ^ pcg(seed.y ^ pcg(seed.z)));
+    return float(h) * (1.0 / 4294967296.0);
+}
+
+
+float3 hash33(uint3 seed)
+{
+    return float3(
+        hash13(seed),
+        hash13(seed + uint3(1, 0, 0)),
+        hash13(seed + uint3(0, 1, 0))
+    );
+}
+
+
+
+
+float sdSphere(float3 p, float3 center, float radius)
+{
+    return length(p - center) - radius;
+}
+
+
+float4 SmoothMin(float dA, float dB, float3 cA, float3 cB, float k)
+{
+    float h   = clamp(0.5 + 0.5 * (dB - dA) / k, 0.0, 1.0);
+    float3 c  = lerp(cB, cA, h);
+    float  d  = lerp(dB, dA, h) - k * h * (1.0 - h);
+    return float4(c, d);
+}
+
+
+float4 GlobalSDF(float3 p) // TODO : inverse sign for distance inside of shape
+{
+    float  dist  = 1e10;
+    float3 color = float3(0, 0, 0);
+
+    for (int i = 0; i < shapeCount; ++i)
+    {
+        float  d = sdSphere(p, shapeBuffer[i].position, _SphereSize);
+        float4 b = SmoothMin(dist, d, color, shapeBuffer[i].color, _BlendStrength);
+        color = b.xyz;
+        dist  = b.w;
+    }
+    return float4(color, dist);
+}
+
+float3 EstimateNormal(float3 p)
+{
+    const float e = 0.001;
+    float2 k = float2(1, -1);
+    return normalize(
+        k.xyy * GlobalSDF(p + k.xyy * e).w +
+        k.yyx * GlobalSDF(p + k.yyx * e).w +
+        k.yxy * GlobalSDF(p + k.yxy * e).w +
+        k.xxx * GlobalSDF(p + k.xxx * e).w
+    );
+}
+
+int ClosestShapeIndex(float3 p)
+{
+    float best = 1e10;
+    int   idx  = 0;
+    for (int i = 0; i < shapeCount; ++i)
+    {
+        float d = sdSphere(p, shapeBuffer[i].position, _SphereSize);
+        if (d < best) { best = d; idx = i; }
+    }
+    return idx;
+}
+
+
+float RayMarch(float3 ray_origin, float3 rd, float sign, int maxSteps,
+               out float3 hitPos, out int hitShapeIndex, out float3 hitColor)
+{
+    float t   = 0.001;
+    hitPos    = ray_origin;
+    hitShapeIndex = -1;
+
+    for (int i = 0; i < maxSteps; ++i)
+    {
+        float3 p = ray_origin + rd * t;
+        float4 sdf = GlobalSDF(p);
+        float d = sdf.w * sign;
+
+        if (d < 0.001)
+        {
+            hitPos        = p;
+            hitShapeIndex = ClosestShapeIndex(p);
+            hitColor = sdf.xyz;
+            return t;
+        }
+
+        t += max(d, 0.001);  
+
+        if (t > 200.0) break;
+    }
+    return -1.0;
+}
+
+
+float FresnelSchlick(float n1, float n2, float3 normal, float3 incident, float baseRef)
+{
+    float r0 = (n1 - n2) / (n1 + n2);
+    r0 *= r0;
+
+    float cosX = -dot(normal, incident);
+
+    if (n1 > n2)
+    {
+        float n      = n1 / n2;
+        float sinT2  = n * n * (1.0 - cosX * cosX);
+        if (sinT2 > 1.0) return 1.0;   
+        cosX = sqrt(1.0 - sinT2);
+    }
+
+    float x   = 1.0 - cosX;
+    float ret = r0 + (1.0 - r0) * x * x * x * x * x;
+    return baseRef + (1.0 - baseRef) * ret;
+}
+
+float3 BeerLambert(float3 absorb, float dist)
+{
+    return exp(-dist * absorb);
+}
+
+
+
+float3 TracePath(float3 ray_origin, float3 rd, uint2 pixelCoord, int sampleIdx, out float recursion)
+{
+    const float n_air = 1.0002;
+
+    float3 absorption = float3(1, 1, 1);
+    float3 color      = float3(0, 0, 0);
+    int    which      = -1;   // -1 = air
+
+    bool sky = true;
+
+    for (int bounce = 0; recursion < _MaxBounces; ++recursion)
+    {
+        uint3 seed = uint3(pixelCoord * 3u + uint2(sampleIdx * 7, bounce * 13), _FrameIndex);
+        float rand = hash13(seed + uint3(bounce * 17, sampleIdx * 31, 0));
+
+        float3 hitPos;
+        float3 hitColor;
+        int    hitIdx;
+        float  t;
+
+        if (which == -1)
+        {
+            // In the air, looking for surface
+            t = RayMarch(ray_origin, rd, 1.0, 180, hitPos, hitIdx, hitColor);
+
+            if (t < 0.0)
+            {
+                // Skybox
+                color += absorption * _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, rd, 0).rgb;
+                sky = false;
+                break;
+            }
+
+           
+            // if (shapeBuffer[hitIdx].emissive > 0.0)
+            // {
+            //     color += absorption * shapeBuffer[hitIdx].emissive;
+            //     break;
+            // }
+
+            float3 normal = EstimateNormal(hitPos);
+            float  F      = FresnelSchlick(n_air, _ior,
+                                           normal, rd,
+                                           _reflectivity);
+
+            if (rand < F)
+            {
+                // Reflection
+                rd = normalize(reflect(rd, normal));
+                ray_origin = hitPos + normal * 0.002;
+            }
+            else
+            {
+                // Refraction, entering the shape
+                float3 refDir = refract(rd, normal, n_air / _ior);
+                if (length(refDir) < 0.001)
+                {
+                    // Force total internal reflection
+                    rd = normalize(reflect(rd, normal));
+                    ray_origin = hitPos + normal * 0.002;
+                    sky = false;
+                }
+                else
+                {
+                    rd    = normalize(refDir);
+                    ray_origin    = hitPos - normal * 0.002;  // Other side
+                    which = hitIdx;
+                }
+            }
+        }
+        else
+        {
+            // Inside a shape, looking for an exit
+            t = RayMarch(ray_origin, rd, -1.0, 180, hitPos, hitIdx, hitColor);
+
+            if (t < 0.0)
+            {
+                // Lost in geometry
+                break;
+            }
+
+            // Beer-Lambert : attenuation from the distance traveled inside the glass
+            //absorption *= BeerLambert(shapeBuffer[which].color, t);
+            absorption *= BeerLambert(hitColor, t);
+
+            float3 normal = -EstimateNormal(hitPos);  // Inter_ior normal
+            float  F      = FresnelSchlick(_ior, n_air,
+                                           normal, rd,
+                                           _reflectivity);
+
+            if (rand < F)
+            {
+                // Intern reflection
+                rd = normalize(reflect(rd, normal));
+                ray_origin = hitPos + normal * 0.002;
+            }
+            else
+            {
+                // Exiting the glass
+                float3 refDir = refract(rd, normal, _ior / n_air);
+                if (length(refDir) < 0.001)
+                {
+                    // Total intern reflection
+                    rd = normalize(reflect(rd, normal));
+                    ray_origin = hitPos + normal * 0.002;
+                    sky = false;
+                }
+                else
+                {
+                    rd    = normalize(refDir);
+                    ray_origin    = hitPos - normal * 0.002;
+                    which = -1;
+                }
+            }
+        }
+    }
+
+    
+
+    return color;
+}
+
+
+
+float3 GetRayDirection(uint3 id)
+{
+    uint width, height;
+    Result.GetDimensions(width, height);
+
+    float2 uv  = (float2(id.x, id.y) + 0.5) / float2(width, height);
+    float2 ndc = uv * 2.0 - 1.0;
+
+    float4 rayClip = float4(ndc, 0, 1);
+    float4 rayView = mul(_CameraInverseProjection, rayClip);
+    rayView /= rayView.w;
+    rayView.z = -1.0;
+
+    return mul((float3x3)_CameraToWorld, normalize(rayView.xyz));
+}
+
+
+
+float DensityAlongRay(float3 rayOrigin, float3 rayDirection)
+{
+    float3 rayPos        = rayOrigin + rayDirection * 0.01;
+    float  resultDensity = 0.0;
+
+    for (int i = 0; i < 280; i++)
+    {
+        float4 sceneData = GlobalSDF(rayPos);
+        if (sceneData.w < 0.0)
+        {
+            resultDensity -= sceneData.w;
+            rayPos -= rayDirection * sceneData.w;
+        }
+        else
+        {
+            rayPos += rayDirection * sceneData.w;
+        }
+        rayPos += rayDirection * 0.01;
+    }
+    return resultDensity;
+}
+
+
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    float3 ray_origin     = _CameraPosition;
+    float3 rd     = normalize(GetRayDirection(id));
+    uint2  pixel  = id.xy;
+
+    // ── Path tracing Monte Carlo : moyenne de N samples
+    float3 col = float3(0, 0, 0);
+
+    float bounces = 0.0;
+    for (int s = 0; s < _Samples; ++s)
+    {
+        float3 sample = TracePath(ray_origin, rd, pixel, s, bounces);
+        col += pow(max(sample, 0.0), _Gamma);     // encode gamma avant moyenne
+    }
+
+    col = pow(col / float(_Samples), 1.0 / _Gamma);  // decode gamma
+
+
+    // ── Debug modes (conservés de l'original)
+    if (_DebugModeIndex != 0)
+    {
+        float3 hitPos;
+        float3 hitColor;
+        int    hitIdx;
+        float  t = RayMarch(ray_origin, rd, 1.0, 180, hitPos, hitIdx, hitColor);
+        bool   hit = t > 0.0;
+
+        if (_DebugModeIndex == 1) col = float3(hit, hit, hit);
+        if (_DebugModeIndex == 2) col = hit ? EstimateNormal(hitPos) * 0.5 + 0.5 : float3(0,0,0);
+        if (_DebugModeIndex == 3) col = rd * 0.5 + 0.5;
+        if (_DebugModeIndex == 4)
+        {
+            float density = DensityAlongRay(ray_origin, rd);
+            col = density * _DensityMult;
+        }
+        if (_DebugModeIndex == 5)
+        {
+            float c = bounces / _MaxBounces;
+            col = float4(c, c, c, 1);
+        }
+    }
+
+    Result[id.xy] = float4(col, 1.0);
+}

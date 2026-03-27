@@ -185,7 +185,7 @@ RayCastResult RayCast(float3 rayOrigin, float3 rayDirection)
     }
 
     result.hit = false;
-    result.color = _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, rayDirection, 0);
+    result.color = skybox;
     return result;
 }
 

@@ -6,7 +6,7 @@ using System;
 
 public enum DebugMode
 {
-    None, Hit, Normal, RayDirection, Density
+    None, Hit, Normal, RayDirection, Density, BounceCount
 }
 
 [ExecuteInEditMode]
@@ -26,12 +26,17 @@ public class RayMaster : MonoBehaviour
 
     [Range(0, 1)] 
     public float reflectionRatio = 0.5f;
-    [Range(0, 5)]
+    [Range(2, 10)]
     public int rayBounceCount = 2;
     [Range(0, 1)] 
     public float densityMult = 0.2f;
     [Range(1, 2)]
-    public float refractionIndex = 1.5f;
+    public float ior = 1.5f;
+
+    [Range(0, 3)]
+    public float gamma = 1.5f;
+
+    [Range(0, 64)] public int samples = 16;
 
     
     public DebugMode debugMode = DebugMode.None;
@@ -59,19 +64,34 @@ public class RayMaster : MonoBehaviour
     void Update()
     {
         int kernel = computeShader.FindKernel("CSMain");
+        
+        // View and light info
         computeShader.SetMatrix("_CameraToWorld", _cam.cameraToWorldMatrix);
         computeShader.SetMatrix("_CameraInverseProjection", _cam.projectionMatrix.inverse);
         computeShader.SetVector("_CameraPosition", _cam.transform.position);
         computeShader.SetVector("_LightDirection", _light.transform.forward.normalized);
+        
+        // Params
         computeShader.SetFloat("_BlendStrength", blendStrength);
         computeShader.SetFloat("_SphereSize", pointSize);
-        computeShader.SetFloat("_ReflectionRatio", reflectionRatio);
-        computeShader.SetInt("_RayBounceCount", rayBounceCount);
+        computeShader.SetFloat("_ior", ior);
+        computeShader.SetFloat("_reflectivity", reflectionRatio);
+        
+        // Simu params
+        computeShader.SetInt("_Samples", samples); 
+        computeShader.SetInt("_MaxBounces", rayBounceCount);
+        computeShader.SetFloat("_Gamma", gamma);
+        computeShader.SetInt("_FrameIndex", Time.frameCount);
+        
+        // Debug
         computeShader.SetInt("_DebugModeIndex", (int)debugMode);
         computeShader.SetFloat("_DensityMutl", densityMult);
-        computeShader.SetFloat("_RefractionIndex", refractionIndex);
+        
+        // Textures
         computeShader.SetTexture(kernel, "_SkyboxCubemap", skyboxCubemap);
         computeShader.SetTexture(kernel, "Result", _renderTexture);
+        
+        
         if (transform.childCount > 0)
         {
             Point.PointData[] shapeDataList = new Point.PointData[transform.childCount];
