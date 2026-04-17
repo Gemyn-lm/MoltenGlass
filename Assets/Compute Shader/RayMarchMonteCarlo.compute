@@ -25,7 +25,20 @@ float _reflectivity;
 // ─────────────────────────────────────────────
 int   _Samples;        
 int   _MaxBounces;     
-float _Gamma;          
+float _Gamma;
+float _Epsilon;
+
+// struct Shape
+// {
+//     float3 position;
+//     float3 absorb;       // couleur d'absorption Beer-Lambert (ex: (0.1, 0.0, 0.0) = verre teinté rouge)
+//     float  ior;          // indice de réfraction (ex: 1.5 pour du verre)
+//     float  emissive;     // intensité d'émission (0 = pas de lumière)
+//     float  reflectivity; // réflectivité de base Fresnel (0 = pur diélectrique, 1 = miroir)
+// };
+
+#define MAX_BOUNCES  4
+#define MAX_STACK    32 
 
 // ─────────────────────────────────────────────
 //  Skybox
@@ -140,17 +153,17 @@ int ClosestShapeIndex(float3 p)
 float RayMarch(float3 ray_origin, float3 rd, float sign, int maxSteps,
                out float3 hitPos, out int hitShapeIndex, out float3 hitColor)
 {
-    float t   = 0.001;
+    float t   = _Epsilon;
     hitPos    = ray_origin;
     hitShapeIndex = -1;
 
     for (int i = 0; i < maxSteps; ++i)
     {
-        float3 p = ray_origin + rd * t;
+        float3 p = ray_origin + rd * (t);
         float4 sdf = GlobalSDF(p);
         float d = sdf.w * sign;
 
-        if (d < 0.001)
+        if (d < _Epsilon)
         {
             hitPos        = p;
             hitShapeIndex = ClosestShapeIndex(p);
@@ -158,7 +171,7 @@ float RayMarch(float3 ray_origin, float3 rd, float sign, int maxSteps,
             return t;
         }
 
-        t += max(d, 0.001);  
+        t += max(d, _Epsilon);  
 
         if (t > 200.0) break;
     }
@@ -191,7 +204,172 @@ float3 BeerLambert(float3 absorb, float dist)
     return exp(-dist * absorb);
 }
 
+struct RayNode
+{
+    float3 ro;
+    float3 rd;
+    float3 throughput;  // poids Fresnel accumulé depuis la racine
+    float3 absorption;  // Beer-Lambert accumulé (commence à 1,1,1)
+    int    which;       // -1 = dans l'air  |  >= 0 = dans la shape 'which'
+    int    depth;       // profondeur dans l'arbre (0 = rayon caméra)
+};
 
+float3 TraceTree(float3 ro, float3 rd)
+{
+    const float n_air = 1.0002;
+
+    RayNode stack[MAX_STACK];
+    int     stackSize = 0;
+
+    // Noeud racine
+    RayNode root;
+    root.ro         = ro;
+    root.rd         = rd;
+    root.throughput = float3(1, 1, 1);
+    root.absorption = float3(1, 1, 1);
+    root.which      = -1;
+    root.depth      = 0;
+    stack[stackSize++] = root;
+
+    float3 color = float3(0, 0, 0);
+
+    while (stackSize > 0)
+    {
+        RayNode node = stack[--stackSize];  // pop
+
+        // ── Feuille : profondeur max → évalue la skybox et s'arrête
+        if (node.depth >= MAX_BOUNCES)
+        {
+            color += node.throughput * node.absorption
+                   * _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, node.rd, 0).rgb;
+            continue;
+        }
+
+        float3 hitPos;
+        int    hitIdx;
+        float  t;
+
+        // ────────────────────────────────────────
+        //  CAS A : rayon dans l'AIR
+        // ────────────────────────────────────────
+        if (node.which == -1)
+        {
+            float3 resultColor = float3(0, 0, 0);
+            t = RayMarch(node.ro, node.rd, 1.0, 500, hitPos, hitIdx, resultColor);
+
+            if (t < 0.0)
+            {
+                // Pas de hit → skybox
+                color += node.throughput * node.absorption
+                       * _SkyboxCubemap.SampleLevel(sampler_SkyboxCubemap, node.rd, 0).rgb;
+                continue;
+            }
+
+            // Source de lumière → accumule et s'arrête sur ce chemin
+            // if (shapeBuffer[hitIdx].emissive > 0.0)
+            // {
+            //     color += node.throughput * node.absorption * shapeBuffer[hitIdx].emissive;
+            //     continue;
+            // }
+
+            float3 normal = EstimateNormal(hitPos);
+            float  F      = FresnelSchlick(n_air, _ior,
+                                           normal, node.rd,
+                                           _reflectivity);
+
+            // ── Enfant RÉFLEXION  (énergie = F)
+            if (F > 0.001 && stackSize < MAX_STACK - 1)
+            {
+                RayNode refl;
+                refl.ro         = hitPos + normal * 0.003;
+                refl.rd         = normalize(reflect(node.rd, normal));
+                refl.throughput = node.throughput * F;
+                refl.absorption = node.absorption;
+                refl.which      = -1;
+                refl.depth      = node.depth + 1;
+                stack[stackSize++] = refl;
+            }
+
+            // ── Enfant RÉFRACTION (énergie = 1 - F)
+            float  wRefr  = 1.0 - F;
+            float3 refDir = refract(node.rd, normal, n_air / _ior);
+
+            if (wRefr > 0.001 && length(refDir) > 0.001 && stackSize < MAX_STACK - 1)
+            {
+                RayNode refr;
+                refr.ro         = hitPos - normal * 0.003;
+                refr.rd         = normalize(refDir);
+                refr.throughput = node.throughput * wRefr;
+                refr.absorption = node.absorption;
+                refr.which      = hitIdx;   // on entre dans la shape
+                refr.depth      = node.depth + 1;
+                stack[stackSize++] = refr;
+            }
+        }
+        // ────────────────────────────────────────
+        //  CAS B : rayon DANS une shape (cherche la sortie)
+        // ────────────────────────────────────────
+        else
+        {
+            float3 resultColor = float3(0, 0, 0);
+            t = RayMarch(node.ro, node.rd, -1.0, 500, hitPos, hitIdx, resultColor);
+
+            if (t < 0.0) continue;  // perdu dans la géométrie, abandon
+
+            // Beer-Lambert : atténuation par la distance parcourue dans le matériau
+            float3 newAbsorption = node.absorption
+                                 * exp(-t * resultColor);
+
+            float3 normal = -EstimateNormal(hitPos);   // normale pointe vers l'intérieur
+            float  F      = FresnelSchlick(_ior, n_air,
+                                           normal, node.rd,
+                                           _reflectivity);
+
+            // ── Enfant RÉFLEXION INTERNE (énergie = F)
+            if (F > 0.001 && stackSize < MAX_STACK - 1)
+            {
+                RayNode refl;
+                refl.ro         = hitPos + normal * 0.003;
+                refl.rd         = normalize(reflect(node.rd, normal));
+                refl.throughput = node.throughput * F;
+                refl.absorption = newAbsorption;
+                refl.which      = node.which;   // reste dans la shape
+                refl.depth      = node.depth + 1;
+                stack[stackSize++] = refl;
+            }
+
+            // ── Enfant SORTIE (énergie = 1 - F)
+            float  wOut   = 1.0 - F;
+            float3 refDir = refract(node.rd, normal,
+                                    _ior / n_air);
+
+            if (wOut > 0.001 && stackSize < MAX_STACK - 1)
+            {
+                RayNode exitNode;
+                exitNode.throughput = node.throughput * wOut;
+                exitNode.absorption = newAbsorption;
+                exitNode.depth      = node.depth + 1;
+
+                if (length(refDir) < 0.001)
+                {
+                    // Réflexion interne totale de secours
+                    exitNode.ro    = hitPos + normal * 0.003;
+                    exitNode.rd    = normalize(reflect(node.rd, normal));
+                    exitNode.which = node.which;
+                }
+                else
+                {
+                    exitNode.ro    = hitPos - normal * 0.003;
+                    exitNode.rd    = normalize(refDir);
+                    exitNode.which = -1;    // on sort dans l'air
+                }
+                stack[stackSize++] = exitNode;
+            }
+        }
+    }
+
+    return color;
+}
 
 float3 TracePath(float3 ray_origin, float3 rd, uint2 pixelCoord, int sampleIdx, out float recursion)
 {
@@ -216,7 +394,7 @@ float3 TracePath(float3 ray_origin, float3 rd, uint2 pixelCoord, int sampleIdx, 
         if (which == -1)
         {
             // In the air, looking for surface
-            t = RayMarch(ray_origin, rd, 1.0, 180, hitPos, hitIdx, hitColor);
+            t = RayMarch(ray_origin, rd, 1.0, 500, hitPos, hitIdx, hitColor);
 
             if (t < 0.0)
             {
@@ -266,7 +444,7 @@ float3 TracePath(float3 ray_origin, float3 rd, uint2 pixelCoord, int sampleIdx, 
         else
         {
             // Inside a shape, looking for an exit
-            t = RayMarch(ray_origin, rd, -1.0, 180, hitPos, hitIdx, hitColor);
+            t = RayMarch(ray_origin, rd, -1.0, 500, hitPos, hitIdx, hitColor);
 
             if (t < 0.0)
             {
@@ -370,11 +548,12 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float3 col = float3(0, 0, 0);
 
     float bounces = 0.0;
-    for (int s = 0; s < _Samples; ++s)
-    {
-        float3 sample = TracePath(ray_origin, rd, pixel, s, bounces);
-        col += pow(max(sample, 0.0), _Gamma);     // encode gamma avant moyenne
-    }
+    // for (int s = 0; s < _Samples; ++s)
+    // {
+    //     float3 sample = TracePath(ray_origin, rd, pixel, s, bounces);
+    //     col += pow(max(sample, 0.0), _Gamma);     // encode gamma avant moyenne
+    // }
+    col = TraceTree(ray_origin, rd);
 
     col = pow(col / float(_Samples), 1.0 / _Gamma);  // decode gamma
 
