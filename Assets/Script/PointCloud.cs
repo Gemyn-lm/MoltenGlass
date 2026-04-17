@@ -18,7 +18,7 @@ public class PointCloud : MonoBehaviour
         for (int i = 0; i < sphereCount; i++)
         {
             Point sphere = Instantiate(spherePrefab, sphereParent).GetComponent<Point>();
-            sphere.transform.localPosition = UnityEngine.Random.insideUnitSphere * 8f;
+            sphere.transform.localPosition = UnityEngine.Random.insideUnitSphere * 50f;
             sphere.color = new Color(0, 0, 0, 1);
             sphere.transform.localScale = new Vector3(2, 2, 2);
         }
