@@ -12,6 +12,7 @@ public class Point : MonoBehaviour
     }
     
     public Color color;
+    public float Radius = 1.0f;
 
     public PointData GetPointData()
     {
