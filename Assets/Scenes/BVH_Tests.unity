@@ -225,6 +225,8 @@ MonoBehaviour:
   Origin: {x: 0, y: 0, z: 0}
   Direction: {x: 0, y: 0, z: 0}
   InverseDirection: {x: 0, y: 0, z: 0}
+  Speed: 20
+  AngularSpeed: 20
 --- !u!1 &600051664
 GameObject:
   m_ObjectHideFlags: 0
@@ -271,7 +273,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::BVHBuilder
   RayMaxDistance: 100
   TargetDepth: 1
-  MaxDepth: 18
+  MaxDepth: 10
   HitMaterial: {fileID: 2100000, guid: 0a3a93aeabdf32f40a903f05b9d5cb5e, type: 2}
   debugFlags: -1
 --- !u!1 &896254325
