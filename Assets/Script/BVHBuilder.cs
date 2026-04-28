@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Mathematics;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public class BoundingBox
 {
@@ -121,10 +122,20 @@ public class BVHBuilder : MonoBehaviour
         Split(root);
     }
 
+    ulong frameCount = 0L;
+    double totalTime = 0D;
+
     // Update is called once per frame
     void Update()
     {
+        ++frameCount;
+        totalTime += Time.deltaTime;
         // ComputeBVH();
+    }
+
+    private void OnDestroy()
+    {
+        print("Average frame time: " + totalTime / frameCount * 1e3D + "ms");
     }
 
     float RayBoundingBoxDst(in Ray ray, in BoundingBox box)
