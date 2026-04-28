@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 
 public class BoundingBox
@@ -39,6 +40,8 @@ public struct BVHResult
 public class Node
 {
     public BoundingBox Bounds = new();
+    public int SphereCount = 0;
+    public int Index = -1;
     public List<Point> spheres = new();
     public Node ChildA = null;
     public Node ChildB = null;
@@ -61,6 +64,7 @@ public class BVHBuilder : MonoBehaviour
     public int MaxDepth = 14;
     public Material HitMaterial = null;
     public EDebugFlags debugFlags = 0;
+    public bool UseBVH = true;
     private List<Point> sphereList = new();
     private Node root = null;
     private Ray ray = null;
@@ -75,14 +79,8 @@ public class BVHBuilder : MonoBehaviour
         {
             sphereList.Add(point);
         }
-        BoundingBox bounds = new();
-        foreach(Point sphere in sphereList)
-        {
-            bounds.GrowToInclude(sphere.transform.position, sphere.Radius);
-        }
-        
-        root = new Node() { Bounds = bounds, spheres = sphereList };
-        Split(root);
+        if(UseBVH)
+            ComputeBVH();
     }
 
     private void Split(Node parent, in int depth = 0)
@@ -111,10 +109,22 @@ public class BVHBuilder : MonoBehaviour
         Split(parent.ChildB, depth + 1);
     }
 
+    void ComputeBVH()
+    {
+        BoundingBox bounds = new();
+        foreach (Point sphere in sphereList)
+        {
+            bounds.GrowToInclude(sphere.transform.position, sphere.Radius);
+        }
+
+        root = new Node() { Bounds = bounds, spheres = sphereList };
+        Split(root);
+    }
+
     // Update is called once per frame
     void Update()
     {
-        
+        // ComputeBVH();
     }
 
     float RayBoundingBoxDst(in Ray ray, in BoundingBox box)
@@ -163,7 +173,21 @@ public class BVHBuilder : MonoBehaviour
         return dst;
     }
 
-    BVHResult RaySphereTestBVH(Node node, Ray ray, BVHResult state, int depth = 0)
+    private BVHResult GetClosestSphereInListFromRay(in Ray ray, BVHResult state, in List<Point> spheres)
+    {
+        foreach (Point sphere in spheres)
+        {
+            float distToSphere = RaySphere(ray, sphere);
+            if (distToSphere < state.ClosestDistance)
+            {
+                state.ClosestDistance = distToSphere;
+                state.Sphere = sphere;
+            }
+        }
+        return state;
+    }
+
+    private BVHResult RaySphereTestBVH(Node node, Ray ray, BVHResult state, int depth = 0)
     {
         state.TraversedNodes.Add(node);
         float dist = RayBoundingBoxDst(ray, node.Bounds);
@@ -172,15 +196,7 @@ public class BVHBuilder : MonoBehaviour
             state.Depth = depth;
             if (node.ChildA == null && node.ChildB == null)
             {
-                foreach(Point sphere in node.spheres)
-                {
-                    float distToSphere = RaySphere(ray, sphere);
-                    if(distToSphere < state.ClosestDistance)
-                    {
-                        state.ClosestDistance = distToSphere;
-                        state.Sphere = sphere;
-                    }
-                }
+                state = GetClosestSphereInListFromRay(ray, state, node.spheres);
             }
             else
             {
@@ -192,7 +208,7 @@ public class BVHBuilder : MonoBehaviour
         return state;
     }
 
-    void DrawNodes(Node node, int depth = 0)
+    private void DrawNodes(Node node, int depth = 0)
     {
         if (node == null || depth > TargetDepth)
             return;
@@ -222,40 +238,66 @@ public class BVHBuilder : MonoBehaviour
     MeshRenderer lastSphereRenderer = null;
     Material lastMaterial = null;
 
+    private void UpdateClosestSphere(Point closestSphere)
+    {
+        MeshRenderer sphereRenderer = closestSphere.GetComponent<MeshRenderer>();
+        if (lastSphereRenderer != sphereRenderer)
+        {
+            if (lastMaterial != null && lastSphereRenderer != null)
+                lastSphereRenderer.sharedMaterial = lastMaterial;
+            lastMaterial = sphereRenderer.sharedMaterial;
+            sphereRenderer.sharedMaterial = HitMaterial;
+            lastSphereRenderer = sphereRenderer;
+        }
+    }
+
+    private void ClearLastRenderer()
+    {
+        if (lastSphereRenderer != null)
+        {
+
+            lastSphereRenderer.sharedMaterial = lastMaterial;
+            lastMaterial = null;
+            lastSphereRenderer = null;
+        }
+    }
+
+    private void DrawSphereIfDedugActive(in BVHResult result)
+    {
+        if (debugFlags.HasFlag(EDebugFlags.TargetSphere) == false)
+            return;
+
+        if (float.IsInfinity(result.ClosestDistance) == false && result.Sphere != null)
+        {
+            UpdateClosestSphere(result.Sphere);
+        }
+        else
+        {
+            ClearLastRenderer();
+        }
+    }
+
     private void OnDrawGizmos()
     {
         // DrawNodes(root);
         if (ray == null)
             return;
         Debug.DrawRay(ray.Origin, ray.Direction * RayMaxDistance, Color.aliceBlue);
-        BVHResult result = RaySphereTestBVH(root, ray, new BVHResult() { ClosestDistance = float.PositiveInfinity, TraversedNodes = new()});
-        if(debugFlags.HasFlag(EDebugFlags.BoundingBox))
+        BVHResult result = new BVHResult() { ClosestDistance = float.PositiveInfinity, TraversedNodes = new() };
+        if (UseBVH == true)
         {
-            foreach (Node node in result.TraversedNodes)
-                DrawSingleNode(node);
-        }
-        TargetDepth = result.Depth;
-        if (debugFlags.HasFlag(EDebugFlags.TargetSphere))
-        {
-            if (float.IsInfinity(result.ClosestDistance) == false && result.Sphere != null)
+            result = RaySphereTestBVH(root, ray, result);
+            if (debugFlags.HasFlag(EDebugFlags.BoundingBox))
             {
-                MeshRenderer sphereRenderer = result.Sphere.GetComponent<MeshRenderer>();
-                if (lastSphereRenderer != sphereRenderer)
-                {
-                    if (lastMaterial != null && lastSphereRenderer != null)
-                        lastSphereRenderer.sharedMaterial = lastMaterial;
-                    lastMaterial = sphereRenderer.sharedMaterial;
-                    sphereRenderer.sharedMaterial = HitMaterial;
-                    lastSphereRenderer = sphereRenderer;
-
-                }
+                foreach (Node node in result.TraversedNodes)
+                    DrawSingleNode(node);
             }
+            TargetDepth = result.Depth;
         }
-        if(result.Sphere == null && lastSphereRenderer != null)
+        else
         {
-            lastSphereRenderer.sharedMaterial = lastMaterial;
-            lastMaterial = null;
-            lastSphereRenderer = null;
+            result = GetClosestSphereInListFromRay(ray, result, sphereList);
         }
+        DrawSphereIfDedugActive(result);
     }
 }

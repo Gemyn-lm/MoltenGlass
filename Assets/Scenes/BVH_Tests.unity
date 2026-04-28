@@ -272,10 +272,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BVHBuilder
   RayMaxDistance: 100
-  TargetDepth: 1
-  MaxDepth: 10
+  TargetDepth: 0
+  MaxDepth: 15
   HitMaterial: {fileID: 2100000, guid: 0a3a93aeabdf32f40a903f05b9d5cb5e, type: 2}
   debugFlags: -1
+  UseBVH: 1
 --- !u!1 &896254325
 GameObject:
   m_ObjectHideFlags: 0
@@ -569,7 +570,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4ccecf3f3ee00194e97a1d3a4671dcd0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PointCloud
-  sphereCount: 10000
+  sphereCount: 30000
   sphereList: []
   spherePrefab: {fileID: 7948607651223398973, guid: 4b7f03226f5c14842991eb0eee9d4c6a, type: 3}
   sphereParent: {fileID: 1564366417}
