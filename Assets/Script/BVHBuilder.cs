@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
-using UnityEditor.Experimental.GraphView;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 public class BoundingBox
 {
@@ -52,7 +50,7 @@ public class Node
 [Flags]
 public enum EDebugFlags
 {
-    BoundingBox = 1 << 0,
+    BoundingBox  = 1 << 0,
     TargetSphere = 1 << 1
 }
 
