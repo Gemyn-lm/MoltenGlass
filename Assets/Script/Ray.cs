@@ -5,9 +5,9 @@ using UnityEngine;
 
 public class Ray : MonoBehaviour
 {
-    public Vector3 Origin = Vector3.zero;
-    public Vector3 Direction = Vector3.zero;
-    public Vector3 InverseDirection = Vector3.zero;
+    public float3 Origin = float3.zero;
+    public float3 Direction = float3.zero;
+    public float3 InverseDirection = float3.zero;
 
     public float Speed = 1.0f;
     public float AngularSpeed = 1.0f;
@@ -16,7 +16,7 @@ public class Ray : MonoBehaviour
     {
         Origin = transform.position;
         Direction = transform.forward;
-        InverseDirection = 1.0f / (float3)Direction;
+        InverseDirection = 1.0f / Direction;
     }    
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created

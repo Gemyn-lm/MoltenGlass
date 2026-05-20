@@ -222,9 +222,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 26a898d8a86825b4dae6ee6e777459cf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Ray
-  Origin: {x: 0, y: 0, z: 0}
-  Direction: {x: 0, y: 0, z: 0}
-  InverseDirection: {x: 0, y: 0, z: 0}
+  Origin:
+    x: 0
+    y: 0
+    z: 0
+  Direction:
+    x: 0
+    y: 0
+    z: 0
+  InverseDirection:
+    x: 0
+    y: 0
+    z: 0
   Speed: 20
   AngularSpeed: 20
 --- !u!1 &600051664
@@ -272,7 +281,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BVHBuilder
   RayMaxDistance: 100
-  TargetDepth: 0
+  TargetDepth: 15
   MaxDepth: 15
   HitMaterial: {fileID: 2100000, guid: 0a3a93aeabdf32f40a903f05b9d5cb5e, type: 2}
   debugFlags: -1
@@ -575,7 +584,7 @@ MonoBehaviour:
   spherePrefab: {fileID: 7948607651223398973, guid: 4b7f03226f5c14842991eb0eee9d4c6a, type: 3}
   sphereParent: {fileID: 1564366417}
   UseTorusDistribution: 1
-  Radius: 30
+  Radius: 10
   InnerRadius: 5
   MinMaxSphereRadius:
     x: 0.5
