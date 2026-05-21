@@ -38,6 +38,7 @@ public class BVHBuilder : MonoBehaviour
 
     private ulong frameCount = 0L;
     private double totalTime = 0D;
+    private double totalFrameTime = 0D;
 
     private bool hasHitThisFrame = false;
     private int sphereIndexThisFrame = -1;
@@ -52,16 +53,26 @@ public class BVHBuilder : MonoBehaviour
         ray = FindFirstObjectByType<Ray>();
         PointCloud pointCloud = FindFirstObjectByType<PointCloud>();
         spheres = pointCloud.SphereList.ToArray();
+        System.Diagnostics.Stopwatch stopwatch = new System.Diagnostics.Stopwatch();
+        stopwatch.Start();
         ComputeBVH();
+        stopwatch.Stop();
+        print("BVH build time: " + stopwatch.ElapsedMilliseconds + "ms");
+        stopwatch.Reset();
     }
 
     // Update is called once per frame
     void Update()
     {
         ++frameCount;
-        totalTime += Time.deltaTime;
         // ComputeBVH();
+        System.Diagnostics.Stopwatch stopwatch = new System.Diagnostics.Stopwatch();
+        stopwatch.Start();
         (bool hit, int sphereIndex, float dist, _) = Search();
+        stopwatch.Stop();
+        totalTime += stopwatch.ElapsedMilliseconds;
+        stopwatch.Reset();
+        totalFrameTime += Time.deltaTime;
         if (debugFlags.HasFlag(EDebugFlags.TargetSphere))
         {
             hasHitThisFrame = hit;
@@ -72,7 +83,8 @@ public class BVHBuilder : MonoBehaviour
 
     private void OnDestroy()
     {
-        print("Average frame time: " + (totalTime / frameCount * 1e3D).ToString("n2") + "ms");
+        print("Average search time: " + (totalTime / frameCount).ToString("n4") + "ms");
+        print("Average frame time: "  + (totalFrameTime / frameCount * 1e3D).ToString("n2") + "ms");
     }
 
     private int AddNode(in Node node)
