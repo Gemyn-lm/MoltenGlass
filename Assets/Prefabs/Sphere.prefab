@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 9012527093223861945}
   - component: {fileID: 4396717565037946313}
   - component: {fileID: 5429937734922184877}
+  - component: {fileID: 4575889205157742938}
   m_Layer: 0
   m_Name: Sphere
   m_TagString: Untagged
@@ -104,3 +105,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   color: {r: 0.8050314, g: 0.7902989, b: 0.11391943, a: 1}
+  Radius: 1
+--- !u!114 &4575889205157742938
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7948607651223398973}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cc14924d8b31d6643943072e0696937d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SphereMovement
+  period: 0
+  distance: 0
+  axis: 0

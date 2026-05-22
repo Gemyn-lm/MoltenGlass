@@ -1,0 +1,102 @@
+#pragma kernel DetectBoundary
+
+struct PointData
+{
+    float2 pos;
+    float density;
+};
+
+RWStructuredBuffer<PointData> _Points;
+int   _PointCount;
+float _SearchRadius;
+float _DensitySmooth;
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _PointCount) return;
+
+    float2 p = _Points[id.x].pos;
+
+    // --- 1. Collecter les voisins (O(n) brut, pas d'opti) ---
+    float2 neighbors[512];
+    int k = 0;
+
+    for (int j = 0; j < _PointCount; j++)
+    {
+        if (j == (int)id.x) continue;
+        float2 np = _Points[j].pos;
+        if (distance(p, np) < _SearchRadius && k < 512)
+        {
+            neighbors[k] = np;
+            k++;
+        }
+    }
+
+    if (k < 2)
+    {
+        _Points[id.x].density = 1.0;
+        return;
+    }
+
+    // --- 2. PCA locale ---
+    float2 mean = float2(0, 0);
+    for (int i = 0; i < k; i++) mean += neighbors[i];
+    mean /= k;
+
+    float cxx = 0, cxy = 0, cyy = 0;
+    for (int i = 0; i < k; i++)
+    {
+        float2 d = neighbors[i] - mean;
+        cxx += d.x * d.x;
+        cxy += d.x * d.y;
+        cyy += d.y * d.y;
+    }
+    cxx /= k; cxy /= k; cyy /= k;
+
+    float trace  = cxx + cyy;
+    float det    = cxx * cyy - cxy * cxy;
+    float disc   = sqrt(max(0.0, trace * trace * 0.25 - det));
+    float lambda1 = trace * 0.5 + disc;
+
+    float2 tangent;
+    if (abs(cxy) > 1e-6)
+        tangent = normalize(float2(lambda1 - cyy, cxy));
+    else
+        tangent = cxx >= cyy ? float2(1, 0) : float2(0, 1);
+
+    float2 normal = float2(-tangent.y, tangent.x);
+
+    // --- 3. Calculer les angles ---
+    float angles[512];
+    for (int i = 0; i < k; i++)
+    {
+        float2 d = neighbors[i] - p;
+        angles[i] = atan2(dot(d, normal), dot(d, tangent));
+    }
+
+    // Tri par insertion
+    for (int i = 1; i < k; i++)
+    {
+        float key = angles[i];
+        int j = i - 1;
+        while (j >= 0 && angles[j] > key)
+        {
+            angles[j + 1] = angles[j];
+            j--;
+        }
+        angles[j + 1] = key;
+    }
+
+    // --- 4. Plus grand écart angulaire ---
+    float maxGap = 0;
+    for (int i = 1; i < k; i++)
+        maxGap = max(maxGap, angles[i] - angles[i - 1]);
+
+    float wrapGap = (angles[0] + 2.0 * 3.14159265) - angles[k - 1];
+    maxGap = max(maxGap, wrapGap);
+
+    // --- 5. Score ---
+    float score = pow(maxGap / (2.0 * 3.14159265), _DensitySmooth);
+    _Points[id.x].density = score;
+}
