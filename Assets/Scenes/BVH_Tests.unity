@@ -203,8 +203,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 202503997}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -2.3665226, y: 3.0547373, z: -25}
+  m_LocalRotation: {x: 0.406738, y: -0, z: -0, w: 0.9135449}
+  m_LocalPosition: {x: -0.26692355, y: 28.013391, z: -25}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -500,7 +500,7 @@ Transform:
   m_GameObject: {fileID: 1089030442}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -75}
+  m_LocalPosition: {x: 0, y: 1, z: -40}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -583,7 +583,7 @@ MonoBehaviour:
   sphereList: []
   spherePrefab: {fileID: 7948607651223398973, guid: 4b7f03226f5c14842991eb0eee9d4c6a, type: 3}
   sphereParent: {fileID: 1564366417}
-  UseTorusDistribution: 0
+  UseTorusDistribution: 1
   Radius: 10
   InnerRadius: 5
   MinMaxSphereRadius:
