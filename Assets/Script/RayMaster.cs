@@ -66,8 +66,8 @@ public class RayMaster : MonoBehaviour
         public static readonly int ShapeBuffer            = Shader.PropertyToID("shapeBuffer");
         public static readonly int ShapeCount             = Shader.PropertyToID("shapeCount");
     }
-    
-    public Point[] points;
+
+    public List<Point> points = new List<Point>();
     
     void Start()
     {
@@ -76,13 +76,17 @@ public class RayMaster : MonoBehaviour
         _light = FindFirstObjectByType<Light>();
         kernel =  computeShader.FindKernel("CSMain");
         
-        points = new Point[transform.childCount];
         int i = 0;
         foreach (Transform child in transform)
         {
-            points[i] = child.GetComponent<Point>();
+            points.Add(child.GetComponent<Point>());
             i++;
         }
+    }
+
+    public void AddPoint(Point point)
+    {
+        points.Add(point);
     }
 
     void InitRenderTexture()
@@ -124,9 +128,9 @@ public class RayMaster : MonoBehaviour
         computeShader.SetTexture(kernel, ShaderIDs.Result,        _renderTexture);
         
         
-        if (transform.childCount > 0)
+        if (points.Count > 0)
         {
-            Point.PointData[] shapeDataList = new Point.PointData[transform.childCount];
+            Point.PointData[] shapeDataList = new Point.PointData[points.Count];
             
 
             int i = 0;
@@ -135,10 +139,10 @@ public class RayMaster : MonoBehaviour
                 shapeDataList[i] = point.GetPointData();
                 i++;
             }
-            if (_shapeBuffer == null || _shapeBuffer.count != transform.childCount)
+            if (_shapeBuffer == null || _shapeBuffer.count != points.Count)
             {
                 _shapeBuffer?.Release();
-                _shapeBuffer = new ComputeBuffer(transform.childCount, Point.PointData.DataSize);
+                _shapeBuffer = new ComputeBuffer(points.Count, Point.PointData.DataSize);
             }
             _shapeBuffer.SetData(shapeDataList);
             computeShader.SetBuffer(kernel, ShaderIDs.ShapeBuffer, _shapeBuffer);

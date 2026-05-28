@@ -5,6 +5,8 @@ using UnityEngine;
 public class PointCloud : MonoBehaviour
 {
     public int sphereCount = 10;
+
+    public RayMaster rayMaster;
     
     [SerializeField]
     private List<Point> sphereList = new List<Point>();
@@ -28,7 +30,7 @@ public class PointCloud : MonoBehaviour
         // Radial direction pointing outward from the ring centre at ringAngle
         Vector3 radialDir = new Vector3(Mathf.Sin(ringAngle), Mathf.Cos(ringAngle), 0.0f);
 
-        // Unit circle in the tube cross-section plane (radialDir × Z-axis)
+        // Unit circle in the tube cross-section plane (radialDir ï¿½ Z-axis)
         Vector3 tubeOffset = Mathf.Cos(tubeAngle) * radialDir
                            + Mathf.Sin(tubeAngle) * Vector3.forward;
 
@@ -52,6 +54,30 @@ public class PointCloud : MonoBehaviour
     
     void Update()
     {
-        
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            Vector3 pos = GetMouseWorldPosition();
+            Point sphere = Instantiate(spherePrefab, sphereParent).GetComponent<Point>();
+            sphere.transform.localPosition = pos;
+            sphere.transform.localScale = sphere.Radius * Vector3.one * 2.0f;
+            sphere.color = new Color(0, 0, 0, 1);
+            sphere.Radius = 1f;
+            rayMaster.AddPoint(sphere);
+        }
+    }
+    
+    Vector3 GetMouseWorldPosition()
+    {
+        UnityEngine.Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+    
+        // Plan XY avec Z = 0 : normale = Vector3.forward, point sur le plan = Vector3.zero
+        Plane xyPlane = new Plane(Vector3.forward, Vector3.zero);
+    
+        if (xyPlane.Raycast(ray, out float distance))
+        {
+            return ray.GetPoint(distance);
+        }
+    
+        return Vector3.zero; // fallback
     }
 }

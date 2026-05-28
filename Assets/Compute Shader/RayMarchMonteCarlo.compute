@@ -374,6 +374,22 @@ float3 TraceTree(float3 ro, float3 rd)
 
 
 
+// float3 GetRayDirection(uint3 id)
+// {
+//     uint width, height;
+//     Result.GetDimensions(width, height);
+//
+//     float2 uv  = (float2(id.x, id.y) + 0.5) / float2(width, height);
+//     float2 ndc = uv * 2.0 - 1.0;
+//
+//     float4 rayClip = float4(ndc, 0, 1);
+//     float4 rayView = mul(_CameraInverseProjection, rayClip);
+//     rayView /= rayView.w;
+//     rayView.z = -1.0;
+//
+//     return mul((float3x3)_CameraToWorld, normalize(rayView.xyz));
+// }
+
 float3 GetRayDirection(uint3 id)
 {
     uint width, height;
@@ -382,12 +398,14 @@ float3 GetRayDirection(uint3 id)
     float2 uv  = (float2(id.x, id.y) + 0.5) / float2(width, height);
     float2 ndc = uv * 2.0 - 1.0;
 
-    float4 rayClip = float4(ndc, 0, 1);
+    // En clip space, Z=1 = far plane (convention Unity/DX)
+    float4 rayClip = float4(ndc, 1.0, 1.0);
     float4 rayView = mul(_CameraInverseProjection, rayClip);
-    rayView /= rayView.w;
-    rayView.z = -1.0;
 
-    return mul((float3x3)_CameraToWorld, normalize(rayView.xyz));
+    // On ne veut que la direction : w=0, pas de division
+    rayView.w = 0.0;
+
+    return normalize(mul((float3x3)_CameraToWorld, rayView.xyz));
 }
 
 
